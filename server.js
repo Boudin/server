@@ -1,4 +1,3 @@
-import log from 'book';
 import Koa from 'koa';
 import tldjs from 'tldjs';
 import Debug from 'debug';
@@ -13,12 +12,30 @@ const debug = Debug('localtunnel:server');
 export default function(opt) {
     opt = opt || {};
 
-    const validHosts = (opt.domain) ? [opt.domain] : undefined;
-    const myTldjs = tldjs.fromUserSettings({ validHosts });
+    const domain = (opt.domain) ? opt.domain : undefined;
     const landingPage = opt.landing || 'https://localtunnel.github.io/www/';
+    const apiDomain = opt.apiDomain || domain;
 
-    function GetClientIdFromHostname(hostname) {
+    const myTldjs = tldjs.fromUserSettings({
+        validHosts: [domain]
+    });
+
+    function GetClientId(hostname) {
         return myTldjs.getSubdomain(hostname);
+    }
+
+    function GetHostname(request) {
+        let hostname = request.headers.host;
+
+        if (hostname) {
+            let splitHostname = /([^:]*)(:[0-9]+)?$/.exec(hostname);
+
+            if (splitHostname && splitHostname.length > 1) {
+                hostname = splitHostname[1];
+            }
+        }
+
+        return hostname;
     }
 
     const manager = new ClientManager(opt);
@@ -69,7 +86,7 @@ export default function(opt) {
             debug('making new client with id %s', reqId);
             const info = await manager.newClient(reqId);
 
-            const url = schema + '://' + info.id + '.' + ctx.request.host;
+            const url = schema + '://' + info.id + '.' + domain;
             info.url = url;
             ctx.body = info;
             return;
@@ -107,7 +124,7 @@ export default function(opt) {
         debug('making new client with id %s', reqId);
         const info = await manager.newClient(reqId);
 
-        const url = schema + '://' + info.id + '.' + ctx.request.host;
+        const url = schema + '://' + info.id + '.' + domain;
         info.url = url;
         ctx.body = info;
         return;
@@ -119,16 +136,23 @@ export default function(opt) {
 
     server.on('request', (req, res) => {
         // without a hostname, we won't know who the request is for
-        const hostname = req.headers.host;
+        const hostname = GetHostname(req);
+
         if (!hostname) {
             res.statusCode = 400;
             res.end('Host header is required');
             return;
         }
 
-        const clientId = GetClientIdFromHostname(hostname);
-        if (!clientId) {
+        if (hostname === apiDomain) {
             appCallback(req, res);
+            return;
+        }
+
+        const clientId = GetClientId(hostname);
+        if (!clientId) {
+            res.statusCode = 404;
+            res.end('404');
             return;
         }
 
